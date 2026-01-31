@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 import 'models/models.dart';
+import 'services/services.dart';
 import 'widgets/widgets.dart';
 
 void main() {
@@ -43,17 +44,67 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  final StorageService _storage = StorageService();
   final List<LeadSheet> _leadSheets = [];
   LeadSheet? _currentSheet;
+  bool _isLoading = true;
+  bool _isSaving = false;
+  DateTime? _lastSaved;
 
   @override
   void initState() {
     super.initState();
-    // Create an initial empty lead sheet
-    _createNewSheet();
+    _loadSheets();
   }
 
-  void _createNewSheet() {
+  Future<void> _loadSheets() async {
+    setState(() => _isLoading = true);
+    
+    try {
+      final loaded = await _storage.loadAll();
+      setState(() {
+        _leadSheets.clear();
+        _leadSheets.addAll(loaded);
+        if (_leadSheets.isEmpty) {
+          _createNewSheet(save: false);
+        } else {
+          _currentSheet = _leadSheets.first;
+        }
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+        _createNewSheet(save: false);
+      });
+    }
+  }
+
+  Future<void> _saveSheets() async {
+    if (_isSaving) return;
+    
+    setState(() => _isSaving = true);
+    
+    try {
+      await _storage.saveAll(_leadSheets);
+      setState(() {
+        _lastSaved = DateTime.now();
+        _isSaving = false;
+      });
+    } catch (e) {
+      setState(() => _isSaving = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error saving: $e'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
+  }
+
+  void _createNewSheet({bool save = true}) {
     final newSheet = LeadSheet(
       id: const Uuid().v4(),
       title: 'Untitled',
@@ -63,6 +114,7 @@ class _HomePageState extends State<HomePage> {
       _leadSheets.add(newSheet);
       _currentSheet = newSheet;
     });
+    if (save) _saveSheets();
   }
 
   void _updateCurrentSheet(LeadSheet updated) {
@@ -73,6 +125,7 @@ class _HomePageState extends State<HomePage> {
         _leadSheets[index] = updated;
       }
     });
+    _saveSheets(); // Auto-save on changes
   }
 
   void _selectSheet(LeadSheet sheet) {
@@ -88,9 +141,26 @@ class _HomePageState extends State<HomePage> {
         _currentSheet = _leadSheets.isNotEmpty ? _leadSheets.first : null;
       }
       if (_leadSheets.isEmpty) {
-        _createNewSheet();
+        _createNewSheet(save: false);
       }
     });
+    _saveSheets();
+  }
+
+  void _duplicateSheet(LeadSheet sheet) {
+    final duplicate = LeadSheet(
+      id: const Uuid().v4(),
+      title: '${sheet.title} (Copy)',
+      artist: sheet.artist,
+      key: sheet.key,
+      tempo: sheet.tempo,
+      lines: sheet.lines,
+    );
+    setState(() {
+      _leadSheets.add(duplicate);
+      _currentSheet = duplicate;
+    });
+    _saveSheets();
   }
 
   void _exportAsText() {
@@ -100,11 +170,20 @@ class _HomePageState extends State<HomePage> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Export as Text'),
-        content: SingleChildScrollView(
-          child: SelectableText(
-            text,
-            style: const TextStyle(fontFamily: 'monospace'),
+        title: Row(
+          children: [
+            const Icon(Icons.text_snippet),
+            const SizedBox(width: 8),
+            const Text('Export as Text'),
+          ],
+        ),
+        content: SizedBox(
+          width: 500,
+          child: SingleChildScrollView(
+            child: SelectableText(
+              text,
+              style: const TextStyle(fontFamily: 'monospace'),
+            ),
           ),
         ),
         actions: [
@@ -122,6 +201,21 @@ class _HomePageState extends State<HomePage> {
     final theme = Theme.of(context);
     final isWideScreen = MediaQuery.of(context).size.width > 800;
 
+    if (_isLoading) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text('Loading lead sheets...', style: theme.textTheme.bodyLarge),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: Row(
@@ -131,16 +225,41 @@ class _HomePageState extends State<HomePage> {
             const Text('LeadSheetMaker'),
             if (_currentSheet != null) ...[
               const SizedBox(width: 16),
-              Text(
-                '— ${_currentSheet!.title}',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  color: theme.colorScheme.onSurface.withAlpha(179),
+              Flexible(
+                child: Text(
+                  '— ${_currentSheet!.title}',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    color: theme.colorScheme.onSurface.withAlpha(179),
+                  ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],
           ],
         ),
         actions: [
+          // Save indicator
+          if (_isSaving)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          else if (_lastSaved != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Tooltip(
+                message: 'Last saved: ${_lastSaved!.hour}:${_lastSaved!.minute.toString().padLeft(2, '0')}',
+                child: Icon(
+                  Icons.cloud_done,
+                  size: 20,
+                  color: theme.colorScheme.primary.withAlpha(179),
+                ),
+              ),
+            ),
           IconButton(
             icon: const Icon(Icons.text_snippet),
             onPressed: _currentSheet != null ? _exportAsText : null,
@@ -159,8 +278,7 @@ class _HomePageState extends State<HomePage> {
               child: _buildSheetsList(context),
             ),
           // Divider
-          if (isWideScreen)
-            const VerticalDivider(width: 1),
+          if (isWideScreen) const VerticalDivider(width: 1),
           // Main editor
           Expanded(
             child: _currentSheet != null
@@ -202,6 +320,13 @@ class _HomePageState extends State<HomePage> {
               Icon(Icons.library_music, color: theme.colorScheme.primary),
               const SizedBox(width: 8),
               Text('Lead Sheets', style: theme.textTheme.titleMedium),
+              const Spacer(),
+              Text(
+                '${_leadSheets.length}',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
             ],
           ),
         ),
@@ -227,14 +352,41 @@ class _HomePageState extends State<HomePage> {
                         overflow: TextOverflow.ellipsis,
                       )
                     : null,
-                trailing: IconButton(
-                  icon: const Icon(Icons.delete_outline, size: 20),
-                  onPressed: () => _deleteSheet(sheet),
+                trailing: PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert, size: 20),
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(
+                      value: 'duplicate',
+                      child: Row(
+                        children: [
+                          Icon(Icons.copy, size: 18),
+                          SizedBox(width: 8),
+                          Text('Duplicate'),
+                        ],
+                      ),
+                    ),
+                    const PopupMenuItem(
+                      value: 'delete',
+                      child: Row(
+                        children: [
+                          Icon(Icons.delete, size: 18),
+                          SizedBox(width: 8),
+                          Text('Delete'),
+                        ],
+                      ),
+                    ),
+                  ],
+                  onSelected: (value) {
+                    if (value == 'delete') {
+                      _deleteSheet(sheet);
+                    } else if (value == 'duplicate') {
+                      _duplicateSheet(sheet);
+                    }
+                  },
                 ),
                 onTap: () {
                   _selectSheet(sheet);
-                  if (!MediaQuery.of(context).size.width.isFinite ||
-                      MediaQuery.of(context).size.width <= 800) {
+                  if (MediaQuery.of(context).size.width <= 800) {
                     Navigator.pop(context); // Close drawer on mobile
                   }
                 },

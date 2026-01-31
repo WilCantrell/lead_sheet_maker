@@ -67,12 +67,12 @@ That saved a wretch like me
 
 ## Roadmap
 
-- [ ] Basic lyrics editor
-- [ ] Chord placement system
-- [ ] Drag-and-drop chord repositioning
-- [ ] Save/load lead sheets (JSON format)
+- [x] Basic lyrics editor
+- [x] Chord placement system
+- [x] Drag-and-drop chord repositioning
+- [x] Save/load lead sheets (JSON format)
 - [ ] PDF export
-- [ ] Plain text export
+- [x] Plain text export
 - [ ] Transpose function
 - [ ] Chord library/suggestions
 - [ ] Print support

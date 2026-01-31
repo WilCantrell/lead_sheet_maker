@@ -166,7 +166,7 @@ class _LeadSheetEditorState extends State<LeadSheetEditor> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Click above any lyrics to add a chord. Click a chord to edit or delete it.',
+                    'Click above lyrics to add a chord. Click a chord to edit it. Drag chords to reposition.',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.secondary,
                     ),

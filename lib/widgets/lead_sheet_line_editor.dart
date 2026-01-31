@@ -4,6 +4,7 @@ import '../models/models.dart';
 
 /// Widget for editing a single line of a lead sheet
 /// Shows chords above lyrics and allows clicking to add/edit chords
+/// Supports drag-and-drop repositioning of chords
 class LeadSheetLineEditor extends StatefulWidget {
   final LeadSheetLine line;
   final int lineIndex;
@@ -34,10 +35,14 @@ class _LeadSheetLineEditorState extends State<LeadSheetLineEditor> {
   int? _selectedChordPosition;
   bool _isEditingChord = false;
   final TextEditingController _chordController = TextEditingController();
+  
+  // Drag state
+  int? _draggedChordPosition;
+  int? _dragTargetPosition;
 
   // Character width for monospace positioning
   static const double _charWidth = 10.0;
-  static const double _lineHeight = 24.0;
+  static const double _lineHeight = 28.0;
 
   @override
   void initState() {
@@ -65,11 +70,16 @@ class _LeadSheetLineEditorState extends State<LeadSheetLineEditor> {
     widget.onLineChanged(widget.line.copyWith(lyrics: value));
   }
 
-  void _onChordAreaTap(TapDownDetails details) {
-    // Calculate which character position was clicked
-    final position = (details.localPosition.dx / _charWidth).floor();
+  int _positionFromOffset(double dx) {
+    final position = (dx / _charWidth).floor();
     final maxPosition = widget.line.lyrics.length;
-    final clampedPosition = position.clamp(0, maxPosition);
+    return position.clamp(0, maxPosition);
+  }
+
+  void _onChordAreaTap(TapDownDetails details) {
+    if (_draggedChordPosition != null) return; // Don't handle taps during drag
+    
+    final clampedPosition = _positionFromOffset(details.localPosition.dx);
 
     // Check if there's already a chord at this position
     final existingChord = widget.line.chords.where(
@@ -125,6 +135,54 @@ class _LeadSheetLineEditorState extends State<LeadSheetLineEditor> {
     widget.onLineChanged(widget.line.removeChordAt(position));
   }
 
+  void _onDragStart(int chordPosition) {
+    setState(() {
+      _draggedChordPosition = chordPosition;
+      _dragTargetPosition = chordPosition;
+    });
+  }
+
+  void _onDragUpdate(DragUpdateDetails details, double containerLeft) {
+    if (_draggedChordPosition == null) return;
+    
+    final newPosition = _positionFromOffset(details.globalPosition.dx - containerLeft);
+    if (newPosition != _dragTargetPosition) {
+      setState(() {
+        _dragTargetPosition = newPosition;
+      });
+    }
+  }
+
+  void _onDragEnd() {
+    if (_draggedChordPosition != null && _dragTargetPosition != null) {
+      if (_draggedChordPosition != _dragTargetPosition) {
+        // Check if there's already a chord at the target position
+        final existingAtTarget = widget.line.chords
+            .where((c) => c.position == _dragTargetPosition)
+            .firstOrNull;
+        
+        if (existingAtTarget == null) {
+          // Move the chord
+          widget.onLineChanged(
+            widget.line.moveChord(_draggedChordPosition!, _dragTargetPosition!),
+          );
+        }
+      }
+    }
+    
+    setState(() {
+      _draggedChordPosition = null;
+      _dragTargetPosition = null;
+    });
+  }
+
+  void _onDragCancel() {
+    setState(() {
+      _draggedChordPosition = null;
+      _dragTargetPosition = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -143,54 +201,82 @@ class _LeadSheetLineEditorState extends State<LeadSheetLineEditor> {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Chord line (clickable area)
-        GestureDetector(
-          onTapDown: _onChordAreaTap,
-          child: Container(
-            constraints: BoxConstraints(
-              minHeight: _lineHeight,
-              minWidth: (widget.line.lyrics.length + 10) * _charWidth,
-            ),
-            child: Stack(
-              children: [
-                // Background indicator on hover
-                Container(
-                  height: _lineHeight,
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainerHighest.withAlpha(77),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
+        // Chord line (clickable area with drag support)
+        LayoutBuilder(
+          builder: (context, constraints) {
+            return GestureDetector(
+              onTapDown: _onChordAreaTap,
+              child: Container(
+                constraints: BoxConstraints(
+                  minHeight: _lineHeight,
+                  minWidth: (widget.line.lyrics.length + 10) * _charWidth,
                 ),
-                // Render chords
-                ...widget.line.chords.map((chord) => Positioned(
-                  left: chord.position * _charWidth,
-                  child: _ChordChip(
-                    chord: chord,
-                    style: chordStyle!,
-                    isSelected: _selectedChordPosition == chord.position,
-                    onTap: () {
-                      setState(() {
-                        _selectedChordPosition = chord.position;
-                        _isEditingChord = true;
-                        _chordController.text = chord.symbol;
-                      });
-                    },
-                    onDelete: () => _deleteChordAt(chord.position),
-                  ),
-                )),
-                // Show position indicator when editing
-                if (_isEditingChord && _selectedChordPosition != null)
-                  Positioned(
-                    left: _selectedChordPosition! * _charWidth,
-                    child: Container(
-                      width: 2,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    // Background indicator
+                    Container(
                       height: _lineHeight,
-                      color: theme.colorScheme.primary,
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.surfaceContainerHighest.withAlpha(77),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
                     ),
-                  ),
-              ],
-            ),
-          ),
+                    // Drop target indicator during drag
+                    if (_dragTargetPosition != null && _draggedChordPosition != null)
+                      Positioned(
+                        left: _dragTargetPosition! * _charWidth,
+                        child: Container(
+                          width: 2,
+                          height: _lineHeight,
+                          color: theme.colorScheme.primary,
+                        ),
+                      ),
+                    // Render chords
+                    ...widget.line.chords.map((chord) {
+                      final isDragging = _draggedChordPosition == chord.position;
+                      
+                      return Positioned(
+                        left: chord.position * _charWidth,
+                        child: _DraggableChordChip(
+                          chord: chord,
+                          style: chordStyle!,
+                          isSelected: _selectedChordPosition == chord.position,
+                          isDragging: isDragging,
+                          onTap: () {
+                            setState(() {
+                              _selectedChordPosition = chord.position;
+                              _isEditingChord = true;
+                              _chordController.text = chord.symbol;
+                            });
+                          },
+                          onDelete: () => _deleteChordAt(chord.position),
+                          onDragStart: () => _onDragStart(chord.position),
+                          onDragUpdate: (details) {
+                            final renderBox = context.findRenderObject() as RenderBox;
+                            final containerLeft = renderBox.localToGlobal(Offset.zero).dx;
+                            _onDragUpdate(details, containerLeft);
+                          },
+                          onDragEnd: _onDragEnd,
+                          onDragCancel: _onDragCancel,
+                        ),
+                      );
+                    }),
+                    // Show position indicator when editing (not dragging)
+                    if (_isEditingChord && _selectedChordPosition != null && _draggedChordPosition == null)
+                      Positioned(
+                        left: _selectedChordPosition! * _charWidth,
+                        child: Container(
+                          width: 2,
+                          height: _lineHeight,
+                          color: theme.colorScheme.secondary,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          },
         ),
         // Chord input field (shown when editing)
         if (_isEditingChord)
@@ -233,6 +319,16 @@ class _LeadSheetLineEditorState extends State<LeadSheetLineEditor> {
                   onPressed: _cancelChordEdit,
                   tooltip: 'Cancel',
                 ),
+                if (_selectedChordPosition != null &&
+                    widget.line.chords.any((c) => c.position == _selectedChordPosition))
+                  IconButton(
+                    icon: Icon(Icons.delete, size: 18, color: theme.colorScheme.error),
+                    onPressed: () {
+                      _deleteChordAt(_selectedChordPosition!);
+                      _cancelChordEdit();
+                    },
+                    tooltip: 'Delete chord',
+                  ),
               ],
             ),
           ),
@@ -243,7 +339,7 @@ class _LeadSheetLineEditorState extends State<LeadSheetLineEditor> {
               child: TextField(
                 controller: _lyricsController,
                 focusNode: _lyricsFocusNode,
-                decoration: InputDecoration(
+                decoration: const InputDecoration(
                   isDense: true,
                   hintText: 'Enter lyrics...',
                   border: InputBorder.none,
@@ -294,35 +390,81 @@ class _LeadSheetLineEditorState extends State<LeadSheetLineEditor> {
   }
 }
 
-/// A chip displaying a chord symbol
-class _ChordChip extends StatelessWidget {
+/// A draggable chip displaying a chord symbol
+class _DraggableChordChip extends StatelessWidget {
   final Chord chord;
   final TextStyle style;
   final bool isSelected;
+  final bool isDragging;
   final VoidCallback onTap;
   final VoidCallback onDelete;
+  final VoidCallback onDragStart;
+  final ValueChanged<DragUpdateDetails> onDragUpdate;
+  final VoidCallback onDragEnd;
+  final VoidCallback onDragCancel;
 
-  const _ChordChip({
+  const _DraggableChordChip({
     required this.chord,
     required this.style,
     required this.isSelected,
+    required this.isDragging,
     required this.onTap,
     required this.onDelete,
+    required this.onDragStart,
+    required this.onDragUpdate,
+    required this.onDragEnd,
+    required this.onDragCancel,
   });
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 2),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? Theme.of(context).colorScheme.primaryContainer
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(2),
+      onPanStart: (_) => onDragStart(),
+      onPanUpdate: onDragUpdate,
+      onPanEnd: (_) => onDragEnd(),
+      onPanCancel: onDragCancel,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.grab,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 100),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          decoration: BoxDecoration(
+            color: isDragging
+                ? theme.colorScheme.primaryContainer
+                : isSelected
+                    ? theme.colorScheme.primaryContainer
+                    : theme.colorScheme.surface,
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(
+              color: isDragging
+                  ? theme.colorScheme.primary
+                  : isSelected
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.outline.withAlpha(77),
+              width: isDragging || isSelected ? 2 : 1,
+            ),
+            boxShadow: isDragging
+                ? [
+                    BoxShadow(
+                      color: theme.colorScheme.shadow.withAlpha(51),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Text(
+            chord.symbol,
+            style: style.copyWith(
+              color: isDragging || isSelected
+                  ? theme.colorScheme.primary
+                  : style.color,
+            ),
+          ),
         ),
-        child: Text(chord.symbol, style: style),
       ),
     );
   }
