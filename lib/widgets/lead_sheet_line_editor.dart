@@ -157,7 +157,7 @@ class _LeadSheetLineEditorState extends State<LeadSheetLineEditor> {
                 Container(
                   height: _lineHeight,
                   decoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
+                    color: theme.colorScheme.surfaceContainerHighest.withAlpha(77),
                     borderRadius: BorderRadius.circular(4),
                   ),
                 ),

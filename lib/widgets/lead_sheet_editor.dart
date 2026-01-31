@@ -156,7 +156,7 @@ class _LeadSheetEditorState extends State<LeadSheetEditor> {
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: theme.colorScheme.secondaryContainer.withOpacity(0.3),
+              color: theme.colorScheme.secondaryContainer.withAlpha(77),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Row(
